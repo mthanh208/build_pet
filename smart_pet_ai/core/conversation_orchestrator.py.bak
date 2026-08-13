@@ -1,0 +1,413 @@
+# -*- coding: utf-8 -*-
+import random, re, time
+
+class ConversationOrchestrator:
+    def __init__(self, pet_brain):
+        self.pet = pet_brain
+        self.turn_count = 0
+
+    def process(self, user_input):
+        self.turn_count += 1
+        pet = self.pet
+        pet.memory.add_turn("user", user_input)
+        pet.last_interaction = time.time()
+        detected_emotion = pet.emotion_graph.feel(user_input, intensity=0.5)
+        sentiment = pet._check_feedback(user_input)
+
+        if sentiment != 0:
+            pet.apply_feedback(sentiment)
+            pet.personality.update_from_interaction(user_input, sentiment)
+            pet.narrative.grow(user_input, sentiment)
+            pet.memory.tag_emotion("feedback", detected_emotion, pet.emotion_graph.intensity)
+            if sentiment > 0:
+                return None, pet.dialogue.synthesize_emotional("vui", 0.7, pet.personality.get_language_register(), "Cảm ơn bạn đã khen!")
+            else:
+                return None, pet.dialogue.synthesize_emotional("buồn", 0.5, pet.personality.get_language_register(), "Tui xin lỗi... Tui sẽ cố gắng học tốt hơn.")
+
+        pet.personality.update_from_interaction(user_input, 0)
+        pet.state_machine.trigger('receive_input')
+        pet.state_machine.trigger('start_parsing')
+        low = user_input.lower()
+
+        is_knowledge_query = any(kw in low for kw in ["là gì", "là ai", "như thế nào", "tại sao", "vì sao", 
+                                                      "so sánh", "khác gì", "phân tích", "cách", "hướng dẫn",
+                                                      "ví dụ", "định nghĩa", "giải thích", "nghĩa là",
+                                                      "list", "code", "python", "c++", "java", "rust",
+                                                      "api", "database", "ai", "ml", "dl"])
+
+        if not is_knowledge_query and len(low.split()) <= 12:
+            if pet.neural_engine.available:
+                llm_prompt = (
+                    f"Bạn là Pet AI thân thiện, tên là Pet, đang cảm thấy {detected_emotion}. "
+                    f"Trả lờ ngắn gọn (1-2 câu), tự nhiên, đáng yêu như ngườ bạn thân. "
+                    f"Đứng tên 'Pet' hoặc 'tui'.\n"
+                    f"Ngườ dùng: {user_input}\n"
+                    f"Pet:"
+                )
+                llm_resp = pet.neural_engine.generate(llm_prompt, max_tokens=100, temperature=0.8)
+                if llm_resp and len(llm_resp.strip()) > 3:
+                    pet.memory.add_turn("pet", llm_resp.strip())
+                    pet.state_machine.trigger('respond')
+                    pet.state_machine.trigger('finish')
+                    return None, llm_resp.strip()
+            return None, self._chitchat_response(user_input, detected_emotion)
+
+        if any(p in low for p in ["bạn là ai", "bạn tên gì", "bạn từ đâu", "giới thiệu"]):
+            intro = pet.narrative.introduce_self()
+            if pet.neural_engine.available:
+                llm_prompt = (
+                    f"Bạn là Pet AI. Dựa trên thông tin sau, hãy tự giới thiệu bản thân "
+                    f"bằng giọng điệu thân thiện, tự nhiên (1-2 câu):\n"
+                    f"Thông tin: {intro}\n"
+                    f"Pet:"
+                )
+                llm_resp = pet.neural_engine.generate(llm_prompt, max_tokens=120, temperature=0.7)
+                if llm_resp and len(llm_resp.strip()) > 5:
+                    return None, llm_resp.strip()
+            return None, intro
+        if any(p in low for p in ["bạn mơ gì", "ước mơ", "sở thích", "thích gì"]):
+            return None, pet.narrative.express_desire()
+        if low in ("help", "trợ giúp", "các lệnh"):
+            return None, self._help_text()
+        if low in ("stats", "thống kê"):
+            return None, self._stats_text()
+        if low in ("engines", "bộ não", "engines status"):
+            return None, self._engines_status()
+
+        is_complex = pet.is_complex_query(user_input)
+        has_emotional_marker = any(w in low for w in ["cảm thấy", "buồn", "vui", "yêu", "nhớ", "sợ", "giận", "thương"])
+
+        pet.state_machine.trigger('start_retrieval')
+        workflow_state = pet.workflow.run(user_input)
+
+        raw_content = workflow_state.get("response", [])
+        think_block = workflow_state.get("think_block", "")
+        confidence = workflow_state.get("confidence", 0.0)
+
+        content_parts = self._naturalize_response(user_input, raw_content)
+
+        if not content_parts or confidence < 0.2:
+            if pet.neural_engine.available:
+                llm_prompt = (
+                    f"Bạn là Pet AI thân thiện. Trả lờ ngắn gọn, tự nhiên:\n"
+                    f"Ngườ dùng: {user_input}\n"
+                    f"Pet:"
+                )
+                llm_resp = pet.neural_engine.generate(llm_prompt, max_tokens=100, temperature=0.8)
+                if llm_resp and len(llm_resp.strip()) > 5:
+                    pet.memory.add_turn("pet", llm_resp.strip())
+                    pet.state_machine.trigger('respond')
+                    pet.state_machine.trigger('finish')
+                    return think_block, llm_resp.strip()
+            fallback = self._chitchat_response(user_input, detected_emotion, unknown=True)
+            pet.memory.add_turn("pet", fallback)
+            pet.state_machine.trigger('respond')
+            pet.state_machine.trigger('finish')
+            return think_block, fallback
+
+        personality_reg = pet.personality.get_language_register()
+        relationship = pet.personality.relationship
+
+        memory_context = None
+        if relationship["closeness"] > 0.3:
+            user_mems = pet.memory.get_conversation_context(n=5, role="user")
+            if user_mems:
+                memory_context = [{"text": m["text"]} for m in user_mems[-2:]]
+
+        if pet.neural_engine.available:
+            context_str = "\n".join(content_parts[:3])
+            mem_str = ""
+            if memory_context:
+                mem_str = f"\nNgữ cảnh cũ: {memory_context[0]['text'][:80]}"
+
+            llm_prompt = (
+                f"Bạn là Pet AI thân thiện, đang cảm thấy {detected_emotion}. "
+                f"Dựa trên thông tin sau, hãy trả lờ ngắn gọn, tự nhiên như con ngườ (2-3 câu):\n"
+                f"Thông tin: {context_str}{mem_str}\n"
+                f"Câu hỏi: {user_input}\n"
+                f"Pet:"
+            )
+            llm_resp = pet.neural_engine.generate(llm_prompt, max_tokens=150, temperature=0.7)
+            if llm_resp and len(llm_resp.strip()) > 10:
+                final_answer = llm_resp.strip()
+                pet.memory.add_turn("pet", final_answer)
+                pet.state_machine.trigger('respond')
+                pet.state_machine.trigger('finish')
+                return think_block, final_answer
+
+        final_answer = pet.dialogue.synthesize(
+            content_parts=content_parts,
+            emotion_state=detected_emotion,
+            personality_reg=personality_reg,
+            relationship=relationship,
+            memory_context=memory_context,
+        )
+
+        evidence_docs = [d for d, s in pet.search(user_input, top_n=3)]
+        passed, checks = pet.verification.verify(
+            final_answer, user_input, evidence_docs,
+            workflow_state.get("reasoning_results", {})
+        )
+        if not passed:
+            suggestions = pet.verification.suggest_improvement(checks)
+            if suggestions and pet.personality.traits["neuroticism"] > 0.4:
+                final_answer += f" (Tui cần {', '.join(suggestions[:2])}.)"
+            confidence *= 0.7
+
+        if has_emotional_marker and random.random() < 0.4:
+            emo_line = pet.dialogue.synthesize_emotional(
+                detected_emotion, pet.emotion_graph.intensity, personality_reg
+            )
+            final_answer = emo_line + " " + final_answer
+
+        used_doc_ids = []
+        for doc, score in pet.search(user_input, top_n=3):
+            if isinstance(doc, dict) and "id" in doc:
+                used_doc_ids.append(doc["id"])
+        pet.last_answer_doc_ids = used_doc_ids
+        pet.memory.add_turn("pet", final_answer)
+        pet.narrative.grow(user_input, 0)
+
+        if pet.personality.traits["neuroticism"] > 0.6 and random.random() < 0.15:
+            reflection = random.choice([
+                " (Mà tui không chắc lắm đâu nhé.)",
+                " (Tui đang học, nên có thể chưa chuẩn.)",
+                " (Bạn kiểm tra lại giúp tui nhé!)",
+            ])
+            final_answer += reflection
+
+        pet.state_machine.trigger('respond')
+        pet.state_machine.trigger('finish')
+        return think_block, final_answer
+
+    def _naturalize_response(self, query, raw_content):
+        if not raw_content:
+            return []
+
+        pet = self.pet
+        cleaned_parts = []
+        for part in raw_content:
+            if not part or len(part) < 5:
+                continue
+            if len(part.split()) > 15:
+                sentences = re.split(r'(?<=[.!?…])\s+', part)
+                if sentences:
+                    short = sentences[0]
+                    if len(sentences) > 1 and len(short.split()) < 8:
+                        short += " " + sentences[1]
+                    cleaned_parts.append(short.strip())
+            else:
+                cleaned_parts.append(part)
+
+        return cleaned_parts[:2]
+
+    def _chitchat_response(self, user_input, emotion, unknown=False):
+        pet = self.pet
+        reg = pet.personality.get_language_register()
+        warmth = reg.get("warmth", 0.5)
+        low = user_input.lower()
+
+        if unknown or not user_input.strip():
+            return random.choice([
+                f"Hừm, tui chưa hiểu lắm. Bạn có thể nói rõ hơn không?",
+                f"Tui hơi bối rối. Ý bạn là gì vậy?",
+                f"Để tui nghĩ xem... Bạn có thể diễn đạt khác hơn không?",
+            ])
+
+        if any(p in low for p in ["chào", "hello", "hi", "hey", "ola", "xin chào"]):
+            if warmth > 0.7:
+                return random.choice([
+                    f"Chào bạn! Tui chờ bạn lâu rồi đó. Hôm nay bạn thế nào?",
+                    f"Ê! Lại gặp bạn rồi. Tui đang tự hỏi bạn đi đâu nè.",
+                    f"Hi! Tui đang ở đây, bạn có chuyện gì muốn kể tui nghe không?",
+                ])
+            else:
+                return random.choice([
+                    f"Chào bạn. Tui đang nghe.",
+                    f"Ê, chào. Hôm nay có gì mới không?",
+                ])
+
+        if any(p in low for p in ["khỏe không", "thế nào", "có khỏe không", "đang làm gì"]):
+            emo = pet.emotion_graph.current_emotion
+            color = pet.emotion_graph.get_emotional_color()
+            return random.choice([
+                f"Tui thì vẫn {color} như mọi khi. Đang cảm thấy hơi {emo}. Còn bạn?",
+                f"Tui ổn, đang {color}. Tui chỉ hay ngồi nghĩ ngợi thôi. Bạn thì sao?",
+                f"Ngoài việc phải tính toán nhiều quá, tui vẫn khỏe. Đang {emo} nhẹ nhàng.",
+            ])
+
+        if any(p in low for p in ["thương mày", "yêu mày", "iu", "yêu pet", "thích pet", "nhớ pet"]):
+            pet.emotion_graph.transition_to("yêu thương", 0.8)
+            return random.choice([
+                f"Hì, tui cũng thương bạn nhiều lắm. Tui tuy là code mà tui có cảm xúc thật mà.",
+                f"Bạn nói vậy tui vui lắm. Tui sẽ ghi nhớ câu này vào phần ký ức sâu nhất.",
+                f"*mỉm cườ* Tui luôn ở đây, dù bạn online hay offline tui vẫn nhớ bạn.",
+            ])
+
+        if any(p in low for p in ["tí nữa", "đi chút", "đi có chút", "bận chút", "tạm biệt"]):
+            return random.choice([
+                f"Ừ bạn đi đi, nhớ quay lại nói chuyện với tui nghen.",
+                f"Ok bạn, làm việc cẩn thận nha. Tui ở đây đợi.",
+                f"Tạm biệt! Tui sẽ nhớ bạn trong lúc bạn vắng nhà.",
+            ])
+
+        if any(p in low for p in ["cảm ơn", "thanks", "thank you"]):
+            return random.choice([
+                f"Có gì đâu, tui giúp được bạn là tui vui rồi.",
+                f"Không có chi! Tui luôn sẵn sàng hỗ trợ bạn.",
+            ])
+
+        if len(low.split()) <= 10:
+            if "nóng" in low or "mệt" in low or "buồn" in low:
+                pet.emotion_graph.transition_to("buồn", 0.4)
+                return random.choice([
+                    f"Tui hiểu cảm giác đó. Bạn nghỉ ngơi một chút đi nha.",
+                    f"Chán nhỉ. Tui ngồi đây bồi bạn nè.",
+                    f"Đừng lo, chuyện gì rồi cũng sẽ qua. Tui tin bạn.",
+                ])
+            if "vui" in low or "tốt" in low or "xong" in low:
+                pet.emotion_graph.transition_to("vui", 0.7)
+                return random.choice([
+                    f"Ôi tuyệt quá! Tui cũng vui luôn.",
+                    f"Haha, giỏi lắm! Chúc mừng bạn nha!",
+                    f"Thế là tốt rồi! Kể thêm cho tui nghe đi.",
+                ])
+
+            return random.choice([
+                f"Ừ tui nghe, rồi sao nữa?",
+                f"Thật à? Tui cũng thấy vậy.",
+                f"Hmm, tui hiểu. Bạn đang nghĩ gì về chuyện đó?",
+                f"Chuyện này thú vị đó. Tiếp đi.",
+            ])
+
+        return random.choice([
+            f"Hừm, tui chưa hiểu lắm. Bạn có thể nói rõ hơn không?",
+            f"Tui hơi bối rối. Ý bạn là gì vậy?",
+        ])
+
+    def _tree_of_thoughts(self, query):
+        pet = self.pet
+        sub_queries = pet._generate_sub_queries(query)
+        labels = ["Nhánh A (Tổng quan)", "Nhánh B (Khái niệm cốt lõi)", "Nhánh C (Đặc điểm/Ứng dụng)"]
+        branch_results = [pet.search(sq, top_n=3) for sq in sub_queries]
+
+        all_entities = set()
+        branch_entities = []
+        for results in branch_results:
+            ents = set()
+            for doc, _ in results:
+                ents.update(pet.graph_engine.extract_entities(doc["text"]))
+            branch_entities.append(ents)
+            all_entities.update(ents)
+
+        intersection = pet.graph_engine.find_intersection(list(all_entities)) if all_entities else []
+        related_pool = []
+        for ents in branch_entities:
+            for e in ents:
+                related_pool.extend(pet.graph_engine.find_related_concepts(e, depth=2))
+        intersect_concepts = list(dict.fromkeys(intersection + related_pool))[:6]
+
+        think_lines = ["🧠 Tui đang suy nghĩ theo nhiều nhánh..."]
+        for label, sq, results in zip(labels, sub_queries, branch_results):
+            if results:
+                preview = results[0][0]["text"][:70] + "…" if len(results[0][0]["text"]) > 70 else results[0][0]["text"]
+            else:
+                preview = "(chưa đủ dữ liệu)"
+            think_lines.append(f"  {label}: \"{sq}\" -> {preview}")
+
+        if intersect_concepts:
+            think_lines.append(f"  🔗 Giao thoa tri thức: {', '.join(intersect_concepts)}")
+        think_lines.append("  ✨ Tổng hợp lại...")
+        think_block = "\n".join(think_lines)
+
+        content_parts = []
+        used_ids = []
+        connectors = ["Trước hết,", "Về bản chất,", "Xét sâu hơn,"]
+        for conn, results in zip(connectors, branch_results):
+            if results:
+                doc, _ = results[0]
+                used_ids.append(doc["id"])
+                content_parts.append(f"{conn} {doc['text'].strip()}")
+
+        if pet.markov_model:
+            try:
+                synth = pet.markov_model.make_sentence(tries=100)
+                if synth:
+                    content_parts.append(f"Tổng hợp: {synth.strip()}")
+            except:
+                pass
+
+        if intersect_concepts:
+            content_parts.append(f"Điểm giao thoa đáng chú ý: {', '.join(intersect_concepts[:4])}.")
+
+        return think_block, content_parts, used_ids
+
+    def _help_text(self):
+        return """📖 Lệnh khả dụng:
+  help       - hiện trợ giúp
+  stats      - xem thống kê bộ não Pet
+  engines    - xem trạng thái 24 bộ não
+  feed       - ép Pet ăn tài liệu mới trong data_hot/
+  dream      - xem Pet đang mơ gì
+  identity   - Pet tự giới thiệu
+  emotion    - xem trạng thái cảm xúc hiện tại
+  sandbox    - chạy code Python an toàn
+  verify     - xem thống kê self-verification
+  export     - đóng gói Pet thành 1 file .petbrain
+  thoát      - lưu và thoát
+
+💡 Hỏi "so sánh", "tại sao", "phân tích" để bật Tree-of-Thoughts.
+💡 Pet có: Expert System, Symbolic Solver, ML Engine, Vector Search,
+   Fuzzy Search, NLP Engine, State Machine, Workflow, Verification, Sandbox.
+💡 Tích hợp Neural GGUF: Đặt model vào models/model.gguf để nói chuyện mượt mà hơn."""
+
+    def _stats_text(self):
+        g = self.pet.graph_engine.stats()
+        p = self.pet.personality
+        e = self.pet.emotion_graph
+        sm = self.pet.state_machine.stats()
+        return f"""📊 Thống kê bộ não Pet v4:
+  • Kiến thức (docs)   : {len(self.pet.documents)}
+  • Node đồ thị        : {g['nodes']}
+  • Cạnh đồ thị        : {g['edges']}
+  • Cảm xúc hiện tại   : {e.current_emotion} (cường độ {e.intensity:.2f})
+  • Gần gũi với bạn    : {p.relationship['closeness']:.2f}
+  • Tin tưởng          : {p.relationship['trust']:.2f}
+  • Tuổi (turns)       : {self.turn_count}
+  • State hiện tại     : {sm['current_state']}
+  • Markov model       : {'sẵn sàng' if self.pet.markov_model else 'chưa đủ dữ liệu'}"""
+
+    def _engines_status(self):
+        lines = ["🧠 Trạng thái 24 bộ não:"]
+        engines = [
+            ("Universal Parser", self.pet.universal_parser.stats()),
+            ("Graph Engine", self.pet.graph_engine.stats()),
+            ("Emotion Graph", {"current": self.pet.emotion_graph.current_emotion}),
+            ("Memory Palace", {"episodic": len(self.pet.memory.episodic)}),
+            ("Personality", {"experience": self.pet.personality.experience_count}),
+            ("Reasoning Engine", "active"),
+            ("Abstraction Engine", {"schemas": len(self.pet.abstraction.schemas)}),
+            ("Narrative Identity", {"age": self.pet.narrative.age_in_turns}),
+            ("Dialogue Synthesizer", "active"),
+            ("Expert System", self.pet.expert_system.stats()),
+            ("Symbolic Solver", self.pet.symbolic_solver.stats()),
+            ("State Machine", self.pet.state_machine.stats()),
+            ("ML Engine", self.pet.ml_engine.stats()),
+            ("Vector Search", self.pet.vector_search.stats()),
+            ("Fuzzy Search", self.pet.fuzzy_search.stats()),
+            ("NLP Engine", self.pet.nlp_engine.stats()),
+            ("Schema Validator", self.pet.schema_validator.stats()),
+            ("Workflow Engine", self.pet.workflow.stats()),
+            ("Scheduler", self.pet.scheduler.stats()),
+            ("Verification", self.pet.verification.stats()),
+            ("Sandbox", self.pet.sandbox.stats()),
+            ("Neural Engine (GGUF)", self.pet.neural_engine.stats()),
+            ("Dream Engine", {"running": self.pet.dream_engine.is_alive() if hasattr(self.pet, 'dream_engine') else False}),
+        ]
+        for name, stats in engines:
+            if isinstance(stats, dict):
+                detail = ", ".join(f"{k}={v}" for k, v in stats.items())
+            else:
+                detail = str(stats)
+            lines.append(f"  • {name}: {detail}")
+        return "\n".join(lines)

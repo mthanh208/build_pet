@@ -1,0 +1,14 @@
+{
+  "schema_version": 3,
+  "parser_version": "rag2026-parser-3",
+  "chunker_version": "rag2026-section-chunker-3",
+  "boot_mode": "lazy",
+  "incremental_hash": "stat fast-path + SHA-256 on candidates",
+  "sparse": "SQLite FTS5/BM25",
+  "fusion": "RRF",
+  "neighbor_expansion": true,
+  "mmr": true,
+  "context_compression": true,
+  "source_of_truth": "data_memory/rag2026.sqlite3",
+  "gguf_alias": "models/current.gguf"
+}

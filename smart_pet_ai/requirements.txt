@@ -1,0 +1,25 @@
+# === Logic cũ ===
+rank_bm25>=0.2.2
+markovify>=0.9.4
+networkx>=3.0
+
+# === Logic mới ===
+sympy>=1.12
+transitions>=0.9.0
+scikit-learn>=1.3
+numpy>=1.24
+pandas>=2.0
+rapidfuzz>=3.0
+spacy>=3.7
+faiss-cpu>=1.7
+pydantic>=2.0
+langgraph>=0.0.40
+APScheduler>=3.10
+pytest>=7.0
+experta>=1.9
+
+# === Neural LLM (CPU) ===
+llama-cpp-python>=0.2.0
+
+# === Optional (NLP tiếng Việt) ===
+# underthesea>=6.8

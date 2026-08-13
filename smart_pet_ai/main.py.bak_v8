@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import os, sys, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from core.pet_brain import UltimateCognitivePetPro
+
+class C:
+    RESET = "\033[0m"
+    CYAN = "\033[96m"
+    YELLOW = "\033[93m"
+    GREEN = "\033[92m"
+    MAGENTA = "\033[95m"
+    DIM = "\033[2m"
+    RED = "\033[91m"
+    BOLD = "\033[1m"
+
+BANNER = f"""{C.CYAN}{C.BOLD}
+   ╔═══════════════════════════════════════════════════════════╗
+   ║  🐾🌟🧠  ULTIMATE COGNITIVE PET AI v4.2  🧠🌟🐾            ║
+   ║  Society of Mind · 24 Engines · Universal JSONL · Think   ║
+   ║  Neural GGUF Integrated · 100% Offline · Self-Verifying   ║
+   ╚═══════════════════════════════════════════════════════════╝
+{C.RESET}"""
+
+def typewriter(text, delay=0.012, color=C.CYAN):
+    for char in text:
+        sys.stdout.write(f"{color}{char}{C.RESET}")
+        sys.stdout.flush()
+        time.sleep(delay)
+    print()
+
+def main():
+    print(BANNER)
+    print("⏳ Đang khởi động 24 bộ não Pet v4.2...")
+    start_time = time.time()
+    pet = UltimateCognitivePetPro()
+
+from core.cognitive_upgrade_v6 import install_v6
+install_v6(pet)
+
+from core.cognitive_upgrade_v7 import install_v7
+install_v7(pet)
+    elapsed = time.time() - start_time
+    neural_stats = pet.neural_engine.stats()
+    print(f"{C.GREEN}🧠 Pet v4.2 đã sẵn sàng! (Khởi động trong {elapsed:.2f}s){C.RESET}")
+    print(f"{C.DIM}   • Kiến thức: {len(pet.documents)} docs")
+    print(f"   • Cảm xúc: {pet.emotion_graph.current_emotion}")
+    print(f"   • Neural LLM: {'✅ Sẵn sàng' if neural_stats['model_loaded'] else '❌ Chưa có file GGUF'}{C.RESET}")
+    print(f"   • Gõ 'help' để xem lệnh.{C.RESET}\n")
+
+    dream = pet.dream_engine
+    dream.start()
+
+    try:
+        while True:
+            try:
+                user_input = input(f"{C.YELLOW}🐾 Bạn: {C.RESET}").strip()
+            except EOFError:
+                break
+            if not user_input: continue
+
+            low = user_input.lower()
+            if low in ("thoát", "thoat", "exit", "quit"): break
+
+            if low == "help":
+                _, h = pet.answer("help")
+                typewriter(h, delay=0.005, color=C.DIM)
+                continue
+            if low == "stats":
+                _, s = pet.answer("stats")
+                typewriter(s, delay=0.005, color=C.DIM)
+                continue
+            if low in ("engines", "bộ não", "engines status"):
+                _, e = pet.answer("engines")
+                typewriter(e, delay=0.005, color=C.DIM)
+                continue
+            if low == "feed":
+                n = pet.digest_hot_folder()
+                if not n: typewriter("📭 data_hot/ đang trống.", delay=0.01, color=C.DIM)
+                continue
+            if low in ("identity", "bạn là ai", "whoareyou"):
+                r = pet.narrative.introduce_self()
+                typewriter(f"🌟 Pet: {r}", delay=0.015)
+                continue
+            if low in ("emotion", "cảm xúc", "mood"):
+                e = pet.emotion_graph
+                typewriter(f"💫 Pet đang cảm thấy: {e.current_emotion} (cường độ {e.intensity:.2f})", delay=0.015, color=C.MAGENTA)
+                continue
+            if low == "dream":
+                typewriter("💤 Pet đang chờ giấc mơ tiếp theo...", delay=0.01, color=C.DIM)
+                continue
+            if low in ("verify", "verification"):
+                v = pet.verification.stats()
+                typewriter(f"🔍 Verification: passed={v['passed']}, failed={v['failed']}, rate={v['pass_rate']:.1%}", delay=0.01, color=C.DIM)
+                continue
+            if low in ("export", "save model", "xuất model"):
+                import export_model
+                export_model.export_model()
+                continue
+            if low in ("sandbox", "code", "run code"):
+                typewriter("🐍 Sandbox mode — gõ code Python, gõ 'exit' để thoát:", delay=0.01, color=C.DIM)
+                code_lines = []
+                while True:
+                    try:
+                        line = input(f"{C.DIM}>>> {C.RESET}")
+                    except EOFError:
+                        break
+                    if line.strip().lower() == "exit":
+                        break
+                    code_lines.append(line)
+                if code_lines:
+                    code = "\n".join(code_lines)
+                    result = pet.run_sandbox(code)
+                    if result["success"]:
+                        print(f"{C.GREEN}✅ Output:{C.RESET}")
+                        print(result["output"])
+                    else:
+                        print(f"{C.RED}❌ Error:{C.RESET}")
+                        print(result.get("error", "Unknown error"))
+                continue
+
+            think_block, answer = pet.answer_v7(user_input) if hasattr(pet, "answer_v7") else (pet.answer_v6(user_input) if hasattr(pet, "answer_v6") else pet.answer(user_input))
+            if think_block:
+                typewriter(think_block, delay=0.003, color=C.MAGENTA)
+                print()
+
+            print(f"{C.CYAN}🌟 Pet: ", end="")
+            typewriter(answer, delay=0.012, color=C.CYAN)
+            if pet.neural_engine.last_stats:
+                s = pet.neural_engine.last_stats
+                print(f"{C.DIM}   ⚡ {s['tokens']} tok | {s['time']}s | {s['tok_per_sec']} tok/s{C.RESET}")
+                pet.neural_engine.last_stats = None
+
+    except KeyboardInterrupt:
+        print(f"\n{C.YELLOW}👋 Tạm biệt!{C.RESET}")
+    finally:
+        pet.shutdown()
+        typewriter("💾 Đã lưu toàn bộ 24 bộ não. Hẹn gặp lại! 🐾", delay=0.01, color=C.GREEN)
+
+if __name__ == "__main__":
+    main()

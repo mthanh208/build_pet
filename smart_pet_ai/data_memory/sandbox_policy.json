@@ -1,0 +1,49 @@
+{
+  "name": "pet-autonomous-sandbox-2026-relaxed",
+  "workspace": "data_memory/sandbox_workspace",
+  "autonomous": true,
+  "network": "disabled",
+  "execution": "bubblewrap-only",
+  "fail_closed": true,
+  "host_write_access": false,
+  "allowed_write_roots": ["data_memory/sandbox_workspace"],
+  "delete_policy": {
+    "allow_inside_workspace": true,
+    "deny_outside_workspace": true
+  },
+  "blocked_commands": [
+    "sudo",
+    "doas",
+    "pkexec",
+    "su",
+    "dd",
+    "mkfs",
+    "fdisk",
+    "parted",
+    "shutdown",
+    "reboot",
+    "halt",
+    "poweroff",
+    "systemctl",
+    "service",
+    "iptables",
+    "ufw",
+    "apt",
+    "apt-get",
+    "dpkg",
+    "snap",
+    "flatpak",
+    "pip install",
+    "npm install -g",
+    "curl | sh",
+    "wget | sh",
+    "chown",
+    "chmod 777 /",
+    "killall",
+    "pkill"
+  ],
+  "blocked_python": [
+    "network modules"
+  ],
+  "allowed_subprocess": "filtered"
+}

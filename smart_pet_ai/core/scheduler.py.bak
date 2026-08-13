@@ -1,0 +1,96 @@
+# -*- coding: utf-8 -*-
+import threading, time, random
+
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.interval import IntervalTrigger
+    HAS_APSCHEDULER = True
+except ImportError:
+    HAS_APSCHEDULER = False
+
+class PetScheduler:
+    def __init__(self, pet):
+        self.pet = pet
+        self.available = HAS_APSCHEDULER
+        self.scheduler = None
+        self._timer = None
+        self._running = False
+        self._fallback_tasks = []
+        if self.available: self.scheduler = BackgroundScheduler()
+        self._setup_tasks()
+
+    def _setup_tasks(self):
+        self._add_task("ml_retrain", 300, self._task_retrain_ml)
+        self._add_task("memory_consolidate", 120, self._task_consolidate_memory)
+        self._add_task("self_reflect", 600, self._task_self_reflect)
+        self._add_task("emotion_decay", 60, self._task_emotion_decay)
+        self._add_task("rule_generation", 300, self._task_generate_rules)
+
+    def _add_task(self, name, interval, func):
+        if self.available and self.scheduler:
+            self.scheduler.add_job(func, IntervalTrigger(seconds=interval), id=name, replace_existing=True)
+        else:
+            self._fallback_tasks.append({"name": name, "interval": interval, "func": func, "last_run": 0})
+
+    def _task_retrain_ml(self):
+        try:
+            if self.pet.documents and self.pet.ml_engine.available:
+                self.pet.ml_engine.train_clustering(self.pet.documents)
+                if hasattr(self.pet, 'rebuild_vector'): self.pet.rebuild_vector()
+        except: pass
+
+    def _task_consolidate_memory(self):
+        try:
+            self.pet.memory._consolidate_working()
+            self.pet.memory.save()
+        except: pass
+
+    def _task_self_reflect(self):
+        try:
+            if self.pet.memory.episodic:
+                ep = random.choice(self.pet.memory.episodic[-5:])
+                self.pet.narrative.grow(ep["summary"][:50], 0.1)
+        except: pass
+
+    def _task_emotion_decay(self):
+        try: self.pet.emotion_graph.decay(factor=0.95)
+        except: pass
+
+    def _task_generate_rules(self):
+        try:
+            patterns = self.pet.abstraction.find_patterns(min_count=2)
+            for p in patterns[:5]: self.pet.expert_system.add_rule_from_schema(p)
+            self.pet.expert_system.save()
+        except: pass
+
+    def start(self):
+        if self.available and self.scheduler:
+            try: self.scheduler.start()
+            except:
+                self.available = False
+                self._start_fallback()
+        else: self._start_fallback()
+
+    def _start_fallback(self):
+        self._running = True
+        self._timer = threading.Thread(target=self._fallback_loop, daemon=True)
+        self._timer.start()
+
+    def _fallback_loop(self):
+        while self._running:
+            now = time.time()
+            for task in self._fallback_tasks:
+                if now - task["last_run"] >= task["interval"]:
+                    try: task["func"]()
+                    except: pass
+                    task["last_run"] = now
+            time.sleep(5)
+
+    def stop(self):
+        if self.available and self.scheduler:
+            try: self.scheduler.shutdown(wait=False)
+            except: pass
+        self._running = False
+
+    def stats(self):
+        return {"available": self.available, "tasks": len(self._fallback_tasks) if not self.available else (len(self.scheduler.get_jobs()) if self.scheduler else 0)}

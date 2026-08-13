@@ -1,55 +1,52 @@
 # -*- coding: utf-8 -*-
-import subprocess, os, sys, tempfile
+"""Backward-compatible sandbox facade.
 
-try:
-    import resource
-    HAS_RESOURCE = True
-except ImportError:
-    HAS_RESOURCE = False
+All Python execution is delegated to SecureSandbox so the project has one
+execution backend and one security policy.  Legacy callers keep the old
+Sandbox API.
+"""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from .secure_sandbox import SecureSandbox
+
 
 class Sandbox:
-    def __init__(self, timeout=10, max_memory=64*1024*1024):
-        self.timeout = timeout
-        self.max_memory = max_memory
+    """Compatibility wrapper around SecureSandbox."""
+
+    def __init__(self, timeout=10, max_memory=64 * 1024 * 1024):
+        root = Path(__file__).resolve().parents[1]
+        workspace = root / "data_memory" / "sandbox_workspace"
+        memory_mb = max(64, int(max_memory / (1024 * 1024)))
+        self.timeout = int(timeout)
+        self.max_memory = int(max_memory)
         self.available = True
         self.execution_count = 0
+        self._sandbox = SecureSandbox(root=str(root), workspace=str(workspace))
+        self._sandbox.timeout_seconds = self.timeout
+        self._sandbox.memory_mb = memory_mb
 
     def run_python(self, code, timeout=None):
         if not code or not code.strip():
             return {"success": False, "error": "Empty code", "output": ""}
-        timeout = timeout or self.timeout
-        self.execution_count += 1
-        tmp_file = None
-        try:
-            tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8')
-            tmp_file.write(code)
-            tmp_file.close()
 
-            proc = subprocess.Popen(
-                [sys.executable, tmp_file.name],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE,
-                text=True
-            )
-            try:
-                stdout, stderr = proc.communicate(input="", timeout=timeout)
-                return {
-                    "success": proc.returncode == 0,
-                    "output": stdout[:5000],
-                    "error": stderr[:2000] if stderr else "",
-                    "returncode": proc.returncode
-                }
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                return {"success": False, "error": f"Timeout after {timeout}s", "output": ""}
-        except Exception as e:
-            return {"success": False, "error": str(e), "output": ""}
-        finally:
-            if tmp_file and os.path.exists(tmp_file.name):
-                try: os.unlink(tmp_file.name)
-                except: pass
+        self.execution_count += 1
+        result = self._sandbox.run_python(
+            code,
+            timeout=int(timeout or self.timeout),
+            memory_mb=max(64, int(self.max_memory / (1024 * 1024))),
+            safe=True,
+        )
+        return result
 
     def stats(self):
-        return {"available": self.available, "executions": self.execution_count, "timeout": self.timeout}
+        status = self._sandbox.status()
+        return {
+            "available": self.available,
+            "executions": self.execution_count,
+            "timeout": self.timeout,
+            "isolated": status["isolated"],
+            "host_fallback": status["host_fallback"],
+        }

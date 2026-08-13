@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os,sys,time,re
+# Agent execution must never silently fall back to host execution.
+os.environ.setdefault('PET_SANDBOX_HOST_FALLBACK', '0')
 sys.path.insert(0,os.path.dirname(os.path.abspath(__file__)))
 from core.pet_brain import UltimateCognitivePetPro
 from core.agent_executor import AgentExecutor
